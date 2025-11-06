@@ -1,0 +1,168 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User account and cryptographic keys
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  publicKey String   // User's public key for encrypting data
+
+  // Encrypted private key (encrypted with password-derived key)
+  encryptedPrivateKey String
+
+  // Session and auth
+  passwordHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  records       Record[]
+  wearables     Wearable[]
+  aiExplanations AIExplanation[]
+  auditLogs     AuditLog[]
+  shareLinks    ShareLink[]
+
+  @@index([email])
+}
+
+// Encrypted health records (labs, imaging, etc.)
+model Record {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type     String // "lab", "imaging", "document", "fhir"
+  filename String
+
+  // Encrypted content stored as file path
+  ciphertextUrl String
+
+  // Wrapped content encryption key (encrypted with user's public key)
+  wrappedKey String
+
+  // Metadata (NOT encrypted - for search/display)
+  // For labs: name, value, unit, range, date
+  metadata Json?
+
+  source   String? // "upload", "fhir", "manual"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  aiExplanations AIExplanation[]
+
+  @@index([userId, type])
+  @@index([userId, createdAt])
+}
+
+// Wearable data (steps, heart rate, sleep)
+model Wearable {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date  DateTime @unique
+
+  // Daily summaries
+  steps       Int?
+  sleepHours  Float?
+  restingHR   Int?
+  activeHR    Int?
+
+  // Additional metrics as JSON
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+// AI-generated explanations
+model AIExplanation {
+  id       String @id @default(cuid())
+  recordId String
+  record   Record @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  summary  String // Plain-language explanation
+  trend    String? // "up", "down", "stable", "normal"
+  severity Int?    // -1 (low), 0 (normal), 1 (high)
+
+  education String? // Educational context
+
+  model    String // "mock", "claude", "openai", "local-llm"
+
+  // De-identification flag
+  wasDeidentified Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([recordId])
+  @@index([userId, createdAt])
+}
+
+// Time-limited sharing links
+model ShareLink {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token    String @unique
+
+  // What's being shared
+  recordIds String // JSON array of record IDs
+
+  // Wrapped decryption keys for recipient
+  wrappedKeys String
+
+  expiresAt DateTime
+  maxViews  Int?
+  viewCount Int      @default(0)
+
+  isRevoked Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId, createdAt])
+}
+
+// Immutable audit log
+model AuditLog {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  event     String // "upload", "analyze", "share", "access", "delete"
+  resourceType String? // "record", "wearable", "share_link"
+  resourceId   String?
+
+  metadata Json? // Additional context
+
+  // Hash of previous log entry for integrity
+  previousHash String?
+  currentHash  String
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([event, createdAt])
+}
